@@ -39,16 +39,24 @@ func main() {
 	}
 	tg := telegram.NewService(bot, []telegram.UserConfig{{ChatID: cfg.Telegram.ChatID, Active: true}})
 
+	handler := newActionHandler(br, sh)
+	if err := tg.StartListening(ctx, handler); err != nil {
+		log.Fatalf("telegram listen: %v", err)
+	}
+
 	actions, err := runStrategy(ctx, cfg, br, sh)
 	if err != nil {
 		log.Fatalf("run strategy: %v", err)
 	}
 
 	for _, a := range actions {
+		handler.actions[a.ID] = a
 		if err := tg.SendActionMessage(ctx, cfg.Telegram.ChatID, a); err != nil {
 			log.Printf("telegram send: %v", err)
 		}
 	}
+
+	select {}
 }
 
 // runStrategy orchestrates a basic trading workflow using modular services.
