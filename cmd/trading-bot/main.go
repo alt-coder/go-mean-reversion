@@ -6,9 +6,11 @@ import (
 	"log"
 	"time"
 
+	"github.com/alt-coder/go-mean-reversion/internal/yahoo"
 	"github.com/alt-coder/go-mean-reversion/pkg/broker"
 	"github.com/alt-coder/go-mean-reversion/pkg/broker/dhan"
 	"github.com/alt-coder/go-mean-reversion/pkg/config"
+	"github.com/alt-coder/go-mean-reversion/pkg/data"
 	"github.com/alt-coder/go-mean-reversion/pkg/models"
 	"github.com/alt-coder/go-mean-reversion/pkg/sheets"
 	"github.com/alt-coder/go-mean-reversion/pkg/telegram"
@@ -44,7 +46,9 @@ func main() {
 		log.Fatalf("telegram listen: %v", err)
 	}
 
-	actions, err := runStrategy(ctx, cfg, br, sh)
+	ds := yahoo.New(sh)
+
+	actions, err := runStrategy(ctx, cfg, br, sh, ds)
 	if err != nil {
 		log.Fatalf("run strategy: %v", err)
 	}
@@ -60,10 +64,14 @@ func main() {
 }
 
 // runStrategy orchestrates a basic trading workflow using modular services.
-func runStrategy(ctx context.Context, cfg config.Config, br broker.Broker, sh sheets.Client) ([]models.Action, error) {
-	cands, err := sh.GetTopCandidates(ctx)
+func runStrategy(ctx context.Context, cfg config.Config, br broker.Broker, sh sheets.Client, ds data.Source) ([]models.Action, error) {
+	cands, err := ds.TopCandidates(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("candidates: %w", err)
+		log.Printf("yahoo top candidates: %v; falling back to sheets", err)
+		cands, err = sh.GetTopCandidates(ctx)
+		if err != nil {
+			return nil, fmt.Errorf("candidates: %w", err)
+		}
 	}
 
 	holds, err := br.GetHoldings(ctx)
