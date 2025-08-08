@@ -40,38 +40,38 @@ type TradingConfig struct {
 
 // Load reads configuration from environment variables.
 func Load() (Config, error) {
-	chatID, err := strconv.ParseInt(os.Getenv("TELEGRAM_CHAT_ID"), 10, 64)
+	chatID, err := strconv.ParseInt(os.Getenv(EnvTelegramChatID), 10, 64)
 	if err != nil {
 		return Config{}, fmt.Errorf("invalid TELEGRAM_CHAT_ID: %w", err)
 	}
-	maxPos, err := strconv.Atoi(os.Getenv("MAX_NEW_POSITIONS"))
+	maxPos, err := strconv.Atoi(os.Getenv(EnvMaxNewPositions))
 	if err != nil {
 		return Config{}, fmt.Errorf("invalid MAX_NEW_POSITIONS: %w", err)
 	}
-	avgThreshold, err := strconv.ParseFloat(os.Getenv("AVERAGING_THRESHOLD"), 64)
+	avgThreshold, err := strconv.ParseFloat(os.Getenv(EnvAveragingThreshold), 64)
 	if err != nil {
 		return Config{}, fmt.Errorf("invalid AVERAGING_THRESHOLD: %w", err)
 	}
 	cfg := Config{
 		Dhan: DhanConfig{
-			ClientID:    os.Getenv("DHAN_CLIENT_ID"),
-			AccessToken: os.Getenv("DHAN_ACCESS_TOKEN"),
+			ClientID:    os.Getenv(EnvDhanClientID),
+			AccessToken: os.Getenv(EnvDhanAccessToken),
 			BaseURL:     "https://api.dhan.co",
 		},
 		Telegram: TelegramConfig{
-			BotToken: os.Getenv("TELEGRAM_BOT_TOKEN"),
+			BotToken: os.Getenv(EnvTelegramBotToken),
 			ChatID:   chatID,
 		},
 		Sheets: SheetsConfig{
-			SpreadsheetID: os.Getenv("SPREADSHEET_ID"),
-			ClientEmail:   os.Getenv("GOOGLE_CLIENT_EMAIL"),
-			PrivateKey:    os.Getenv("GOOGLE_PRIVATE_KEY"),
-			ProjectID:     os.Getenv("GOOGLE_PROJECT_ID"),
+			SpreadsheetID: os.Getenv(EnvSpreadsheetID),
+			ClientEmail:   os.Getenv(EnvGoogleClientEmail),
+			PrivateKey:    os.Getenv(EnvGooglePrivateKey),
+			ProjectID:     os.Getenv(EnvGoogleProjectID),
 		},
 		Trading: TradingConfig{
 			MaxNewPositions:    maxPos,
 			AveragingThreshold: avgThreshold,
-			CSVPath:            os.Getenv("CSV_PATH"),
+			CSVPath:            os.Getenv(EnvCSVPath),
 		},
 	}
 	return cfg, nil
