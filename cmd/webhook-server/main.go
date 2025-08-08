@@ -1,52 +1,27 @@
 package main
 
 import (
-	"context"
-	"encoding/json"
-	"fmt"
-	"log"
-	"net/http"
-	"os"
-	"strings"
-	"time"
+        "context"
+        "encoding/json"
+        "fmt"
+        "log"
+        "net/http"
+        "os"
+        "strings"
+        "time"
 
-	"github.com/gorilla/mux"
-	"golang.org/x/oauth2/google"
-	"golang.org/x/oauth2/jwt"
-	"google.golang.org/api/option"
-	"google.golang.org/api/sheets/v4"
+        "github.com/alt-coder/go-mean-reversion/pkg/models"
+        csvutil "github.com/alt-coder/go-mean-reversion/pkg/utils/csv"
+        "github.com/gorilla/mux"
+        "golang.org/x/oauth2/google"
+        "golang.org/x/oauth2/jwt"
+        "google.golang.org/api/option"
+        "google.golang.org/api/sheets/v4"
 )
 
 // DhanOrderWebhook represents the incoming webhook payload from Dhan
-type DhanOrderWebhook struct {
-	DhanClientID        string      `json:"dhanClientId"`
-	OrderID             string      `json:"orderId"`
-	CorrelationID       string      `json:"correlationId"`
-	OrderStatus         string      `json:"orderStatus"`
-	TransactionType     string      `json:"transactionType"`
-	ExchangeSegment     string      `json:"exchangeSegment"`
-	ProductType         string      `json:"productType"`
-	OrderType           string      `json:"orderType"`
-	Validity            string      `json:"validity"`
-	TradingSymbol       string      `json:"tradingSymbol"`
-	SecurityID          string      `json:"securityId"`
-	Quantity            int         `json:"quantity"`
-	DisclosedQuantity   int         `json:"disclosedQuantity"`
-	Price               float64     `json:"price"`
-	TriggerPrice        float64     `json:"triggerPrice"`
-	AfterMarketOrder    bool        `json:"afterMarketOrder"`
-	BoProfitValue       float64     `json:"boProfitValue"`
-	BoStopLossValue     float64     `json:"boStopLossValue"`
-	LegName             interface{} `json:"legName"`
-	CreateTime          string      `json:"createTime"`
-	UpdateTime          string      `json:"updateTime"`
-	ExchangeTime        string      `json:"exchangeTime"`
-	DrvExpiryDate       interface{} `json:"drvExpiryDate"`
-	DrvOptionType       interface{} `json:"drvOptionType"`
-	DrvStrikePrice      float64     `json:"drvStrikePrice"`
-	OmsErrorCode        interface{} `json:"omsErrorCode"`
-	OmsErrorDescription interface{} `json:"omsErrorDescription"`
-}
+// Alias to shared model
+type DhanOrderWebhook = models.DhanOrderWebhook
 
 // WebhookServer holds the configuration for the webhook server
 type WebhookServer struct {
@@ -207,9 +182,40 @@ func (ws *WebhookServer) updateOrderBook(webhook DhanOrderWebhook, tradingSymbol
 // getSymbolFromSecurityID attempts to get trading symbol from security ID
 // This is a simplified version - you might want to use the same CSV lookup as in trading_bot.go
 func getSymbolFromSecurityID(securityID string) (string, error) {
-	// For now, return an error to use fallback
-	// You can implement CSV lookup here if needed
-	return "", fmt.Errorf("symbol lookup not implemented")
+        if securityID == "" {
+                return "", fmt.Errorf("empty securityID")
+        }
+        symbol, err := lookupSecurityID(securityID)
+        if err != nil {
+                return "", err
+        }
+        return symbol, nil
+}
+
+var (
+        securityCache map[string]string
+        cacheLoaded    time.Time
+)
+
+// lookupSecurityID loads the CSV cache if needed and maps security IDs to symbols.
+func lookupSecurityID(secID string) (string, error) {
+        if securityCache == nil || time.Since(cacheLoaded) > 5*time.Minute {
+                csvPath := os.Getenv("CSV_PATH")
+                cache, err := csvutil.LoadCache(csvPath, map[string]struct{}{})
+                if err != nil {
+                        return "", fmt.Errorf("load cache: %w", err)
+                }
+                securityCache = make(map[string]string, len(cache))
+                for sym, id := range cache {
+                        securityCache[id] = sym
+                }
+                cacheLoaded = time.Now()
+        }
+        sym, ok := securityCache[secID]
+        if !ok {
+                return "", fmt.Errorf("security id %s not found", secID)
+        }
+        return sym, nil
 }
 
 // createSheetsService creates Google Sheets service from environment variables

@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"encoding/csv"
 	"fmt"
 	"log"
 	"math"
@@ -12,6 +11,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/alt-coder/go-mean-reversion/pkg/models"
+	"github.com/alt-coder/go-mean-reversion/pkg/utils/csv"
 	"github.com/go-resty/resty/v2"
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 	cron "github.com/robfig/cron/v3"
@@ -60,11 +61,10 @@ var (
 // GetSecurityID returns the SEM_SMST_SECURITY_ID for the given trading symbol.
 // csvPath should point to your TSV/CSV file (tab-delimited in your example).
 func GetSecurityID(symbol string) (string, error) {
-	var err error
-
 	// Load cache if not yet loaded or if more than 5 minutes have passed
 	if lastLoadtime.IsZero() || time.Since(lastLoadtime) > 5*time.Minute {
-		err = loadCache(csvPath)
+		var err error
+		cache, err = csv.LoadCache(csvPath, nifty50)
 		if err != nil {
 			return "", fmt.Errorf("failed to load cache: %v", err)
 		}
@@ -72,81 +72,10 @@ func GetSecurityID(symbol string) (string, error) {
 		log.Printf("Cache loaded/refreshed at %s", lastLoadtime.Format("15:04:05"))
 	}
 
-	if err != nil {
-		return "", err
-	}
-
 	if id, ok := cache[symbol]; ok {
 		return id, nil
 	}
 	return "", fmt.Errorf("symbol %q not found in cache", symbol)
-}
-
-// loadCache reads the CSV once and builds the in-memory map.
-func loadCache(path string) error {
-	f, err := os.Open(path)
-	if err != nil {
-		return fmt.Errorf("opening CSV: %w", err)
-	}
-	defer f.Close()
-
-	reader := csv.NewReader(f)
-	// reader.Comma = '\t' // tab-delimited CSV
-
-	records, err := reader.ReadAll()
-	if err != nil {
-		return fmt.Errorf("reading CSV: %w", err)
-	}
-
-	cache = make(map[string]string, len(records)-1)
-	for i, row := range records {
-		if i == 0 {
-			// header: SEM_EXM_EXCH_ID, SEM_SEGMENT, SEM_SMST_SECURITY_ID, …, SEM_TRADING_SYMBOL, …
-			continue
-		}
-		if len(row) < 6 {
-			// unexpected format; skip
-			log.Printf("Skipping row %d due to unexpected format: %v", i, row)
-			continue
-		}
-
-		tradingSymbol := row[5] // SEM_TRADING_SYMBOL
-		if _, ok := nifty50[tradingSymbol]; !ok {
-			continue
-		}
-		securityID := row[2] // SEM_SMST_SECURITY_ID
-		cache[tradingSymbol] = securityID
-	}
-	return nil
-}
-
-// Action represents a trading decision
-type Action struct {
-	ID          string // Unique identifier for individual accept/reject
-	Type        string // "new_position", "average_down", or "sell"
-	Symbol      string
-	Lots        int
-	Price       float64
-	Reason      string
-	AfterMarket bool
-}
-
-// PortfolioStock represents a stock in the portfolio
-type PortfolioStock struct {
-	Symbol        string
-	Quantity      int
-	AvgPrice      float64
-	CurrentPrice  float64
-	ProfitLoss    float64
-	PercentChange float64
-}
-
-// Candidate represents a stock candidate from Yahoo Finance or Google Sheets
-type Candidate struct {
-	Symbol    string
-	Deviation float64
-	Price     float64
-	SMA20     float64
 }
 
 // YahooFinanceResponse represents the Yahoo Finance API response
@@ -169,7 +98,7 @@ type YahooFinanceResponse struct {
 // Broker defines methods for brokerage operations
 type Broker interface {
 	GetHoldings(ctx context.Context) (map[string]float64, error)
-	PlaceOrder(ctx context.Context, a Action) (string, error)
+	PlaceOrder(ctx context.Context, a models.Action) (string, error)
 }
 
 // DhanClient implements Broker for Dhan API
@@ -233,7 +162,7 @@ func (d *DhanClient) GetHoldings(ctx context.Context) (map[string]float64, error
 }
 
 // PlaceOrder sends a BUY order and returns status string
-func (d *DhanClient) PlaceOrder(ctx context.Context, a Action) (string, error) {
+func (d *DhanClient) PlaceOrder(ctx context.Context, a models.Action) (string, error) {
 	// Get Dhan security ID for the trading symbol
 	securityId, err := GetSecurityID(a.Symbol)
 	if err != nil {
@@ -288,8 +217,8 @@ var (
 	srv             *sheets.Service
 	bot             *tgbotapi.BotAPI
 	loc             *time.Location
-	pendingActions  map[string]Action // Map of action ID to action
-	acceptedActions []Action          // Actions accepted by user
+	pendingActions  map[string]models.Action // Map of action ID to action
+	acceptedActions []models.Action          // Actions accepted by user
 	broker          Broker
 )
 
@@ -298,7 +227,7 @@ func main() {
 	loc, _ = time.LoadLocation("Asia/Kolkata")
 
 	// Initialize pending actions map
-	pendingActions = make(map[string]Action)
+	pendingActions = make(map[string]models.Action)
 
 	// Initialize Google Sheets client
 	var err error
@@ -429,13 +358,13 @@ func loadNifty50SymbolsFromSheet() error {
 }
 
 // loadPortfolioFromSheet loads portfolio data from Google Sheets
-func loadPortfolioFromSheet() ([]PortfolioStock, error) {
+func loadPortfolioFromSheet() ([]models.PortfolioStock, error) {
 	resp, err := srv.Spreadsheets.Values.Get(spreadsheetID, portfolioRange).Do()
 	if err != nil {
 		return nil, fmt.Errorf("failed to read portfolio: %v", err)
 	}
 
-	var portfolio []PortfolioStock
+	var portfolio []models.PortfolioStock
 	for _, row := range resp.Values {
 		if len(row) >= 6 {
 			symbol := strings.TrimSpace(fmt.Sprint(row[0]))
@@ -449,7 +378,7 @@ func loadPortfolioFromSheet() ([]PortfolioStock, error) {
 			profitLoss, _ := strconv.ParseFloat(fmt.Sprint(row[4]), 64)
 			percentChange, _ := strconv.ParseFloat(fmt.Sprint(row[5]), 64)
 
-			portfolio = append(portfolio, PortfolioStock{
+			portfolio = append(portfolio, models.PortfolioStock{
 				Symbol:        symbol,
 				Quantity:      quantity,
 				AvgPrice:      avgPrice,
@@ -465,7 +394,7 @@ func loadPortfolioFromSheet() ([]PortfolioStock, error) {
 }
 
 // loadTopCandidatesFromYahoo fetches data from Yahoo Finance and finds top 5 most fallen stocks from 20 SMA
-func loadTopCandidatesFromYahoo() ([]Candidate, error) {
+func loadTopCandidatesFromYahoo() ([]models.Candidate, error) {
 	// First, load the Nifty 50 symbols from Google Sheets
 	if err := loadNifty50SymbolsFromSheet(); err != nil {
 		return nil, fmt.Errorf("failed to load Nifty 50 symbols: %v", err)
@@ -481,7 +410,7 @@ func loadTopCandidatesFromYahoo() ([]Candidate, error) {
 	client.SetHeader("Accept", "application/json")
 	client.SetHeader("Accept-Language", "en-US,en;q=0.9")
 
-	var allCandidates []Candidate
+	var allCandidates []models.Candidate
 	now := time.Now()
 	period1 := now.AddDate(0, 0, -30).Unix() // 30 days ago
 	period2 := now.Unix()
@@ -553,7 +482,7 @@ func loadTopCandidatesFromYahoo() ([]Candidate, error) {
 
 		// Only consider stocks that are below SMA20 (negative deviation)
 		if deviation < 0 {
-			allCandidates = append(allCandidates, Candidate{
+			allCandidates = append(allCandidates, models.Candidate{
 				Symbol:    symbol,
 				Deviation: deviation,
 				Price:     currentPrice,
@@ -586,14 +515,14 @@ func loadTopCandidatesFromYahoo() ([]Candidate, error) {
 }
 
 // loadTopCandidatesFromSheet loads the top 5 candidates directly from Google Sheets (fallback)
-func loadTopCandidatesFromSheet() ([]Candidate, error) {
+func loadTopCandidatesFromSheet() ([]models.Candidate, error) {
 	// Read from the "Dashboard" sheet - columns E (Symbol), F (% Drop), G (Live Price)
 	resp, err := srv.Spreadsheets.Values.Get(spreadsheetID, topBuyRange).Do()
 	if err != nil {
 		return nil, fmt.Errorf("failed to read top candidates: %v", err)
 	}
 
-	var candidates []Candidate
+	var candidates []models.Candidate
 	for _, row := range resp.Values {
 		if len(row) >= 3 {
 			symbol := fmt.Sprint(row[0])
@@ -617,7 +546,7 @@ func loadTopCandidatesFromSheet() ([]Candidate, error) {
 			// Convert percentage to decimal (e.g., -6.78 -> -0.0678)
 			deviation = deviation / 100.0
 
-			candidates = append(candidates, Candidate{
+			candidates = append(candidates, models.Candidate{
 				Symbol:    symbol,
 				Deviation: deviation,
 				Price:     price,
@@ -630,14 +559,14 @@ func loadTopCandidatesFromSheet() ([]Candidate, error) {
 }
 
 // determineSellActions determines sell actions for profitable stocks
-func determineSellActions(portfolio []PortfolioStock) []Action {
-	var sellActions []Action
+func determineSellActions(portfolio []models.PortfolioStock) []models.Action {
+	var sellActions []models.Action
 
 	for _, stock := range portfolio {
 		// Only suggest sell if profit percentage > threshold
 		if stock.PercentChange > profitThreshold {
 			actionID := fmt.Sprintf("sell_%s_%d", stock.Symbol, time.Now().Unix())
-			sellActions = append(sellActions, Action{
+			sellActions = append(sellActions, models.Action{
 				ID:          actionID,
 				Type:        "sell",
 				Symbol:      stock.Symbol,
@@ -654,12 +583,12 @@ func determineSellActions(portfolio []PortfolioStock) []Action {
 }
 
 // determineActionsFromSheet determines trading actions based on sheet data and current holdings
-func determineActionsFromSheet(candidates []Candidate, holdMap map[string]float64) []Action {
-	var actions []Action
+func determineActionsFromSheet(candidates []models.Candidate, holdMap map[string]float64) []models.Action {
+	var actions []models.Action
 	maxActions := 2 // Maximum 2 actions per day (can be mix of entry and averaging)
 
 	// First, collect potential entry actions (stocks we don't hold)
-	var entryActions []Action
+	var entryActions []models.Action
 	for _, c := range candidates {
 		if _, exists := holdMap[c.Symbol]; !exists {
 			reason := fmt.Sprintf("%.2f%% below SMA20 at ₹%.2f", c.Deviation*100, c.Price)
@@ -668,7 +597,7 @@ func determineActionsFromSheet(candidates []Candidate, holdMap map[string]float6
 			}
 
 			actionID := fmt.Sprintf("buy_%s_%d", c.Symbol, time.Now().Unix())
-			entryActions = append(entryActions, Action{
+			entryActions = append(entryActions, models.Action{
 				ID:          actionID,
 				Type:        "new_position",
 				Symbol:      c.Symbol,
@@ -681,7 +610,7 @@ func determineActionsFromSheet(candidates []Candidate, holdMap map[string]float6
 	}
 
 	// Second, find potential averaging action (worst performer we hold)
-	var avgAction *Action
+	var avgAction *models.Action
 	worstSymbol := ""
 	worstDrop := avgThreshold // Only average if drop is worse than threshold
 	worstPrice := 0.0
@@ -710,7 +639,7 @@ func determineActionsFromSheet(candidates []Candidate, holdMap map[string]float6
 
 	if worstSymbol != "" {
 		actionID := fmt.Sprintf("avg_%s_%d", worstSymbol, time.Now().Unix())
-		avgAction = &Action{
+		avgAction = &models.Action{
 			ID:          actionID,
 			Type:        "average_down",
 			Symbol:      worstSymbol,
@@ -782,7 +711,7 @@ func createSheetsServiceFromEnv(ctx context.Context) (*sheets.Service, error) {
 }
 
 // notifyTelegram sends individual messages for each action with separate Accept/Reject buttons
-func notifyTelegram(actions []Action) {
+func notifyTelegram(actions []models.Action) {
 	if len(actions) == 0 {
 		return
 	}
@@ -880,17 +809,17 @@ func listenTelegram() {
 
 					bot.Request(tgbotapi.NewCallback(upd.CallbackQuery.ID, "❌ Rejected"))
 
-					rejectMsg := fmt.Sprintf("🚫 %s %s order rejected", action.Symbol, strings.ToUpper(action.Type))
+					rejectMsg := fmt.Sprintf("🚫 %s %s order rejected", action.Symbol, strings.ToUpper(string(action.Type)))
 					bot.Send(tgbotapi.NewMessage(tgChatID, rejectMsg))
-					log.Printf("Action rejected by user: %s %s", action.Symbol, action.Type)
+					log.Printf("models.Action rejected by user: %s %s", action.Symbol, action.Type)
 				}
 			}
 		}
 	}
 }
 
-// placeIndividualOrder executes a single Action via Broker and logs to sheet
-func placeIndividualOrder(action Action) {
+// placeIndividualOrder executes a single models.Action via Broker and logs to sheet
+func placeIndividualOrder(action models.Action) {
 	ctx := context.Background()
 	isAMO := func() bool {
 		n := time.Now().In(loc)
@@ -940,7 +869,7 @@ func placeIndividualOrder(action Action) {
 	row := []interface{}{
 		time.Now().Format("2006-01-02T15:04:05"),
 		action.Symbol,
-		strings.ToUpper(action.Type),
+		strings.ToUpper(string(action.Type)),
 		action.Lots,
 		action.Price,
 		status,
@@ -953,7 +882,7 @@ func placeIndividualOrder(action Action) {
 }
 
 // placeSellOrder handles sell orders (different from buy orders)
-func placeSellOrder(ctx context.Context, action Action) (string, error) {
+func placeSellOrder(ctx context.Context, action models.Action) (string, error) {
 	// Get Dhan security ID for the trading symbol
 	securityId, err := GetSecurityID(action.Symbol)
 	if err != nil {
