@@ -10,6 +10,8 @@ import (
 	"strings"
 	"time"
 
+	dcache "github.com/alt-coder/go-mean-reversion/pkg/dhan/cache"
+	"github.com/alt-coder/go-mean-reversion/pkg/models"
 	"github.com/gorilla/mux"
 	"golang.org/x/oauth2/google"
 	"golang.org/x/oauth2/jwt"
@@ -18,41 +20,15 @@ import (
 )
 
 // DhanOrderWebhook represents the incoming webhook payload from Dhan
-type DhanOrderWebhook struct {
-	DhanClientID        string      `json:"dhanClientId"`
-	OrderID             string      `json:"orderId"`
-	CorrelationID       string      `json:"correlationId"`
-	OrderStatus         string      `json:"orderStatus"`
-	TransactionType     string      `json:"transactionType"`
-	ExchangeSegment     string      `json:"exchangeSegment"`
-	ProductType         string      `json:"productType"`
-	OrderType           string      `json:"orderType"`
-	Validity            string      `json:"validity"`
-	TradingSymbol       string      `json:"tradingSymbol"`
-	SecurityID          string      `json:"securityId"`
-	Quantity            int         `json:"quantity"`
-	DisclosedQuantity   int         `json:"disclosedQuantity"`
-	Price               float64     `json:"price"`
-	TriggerPrice        float64     `json:"triggerPrice"`
-	AfterMarketOrder    bool        `json:"afterMarketOrder"`
-	BoProfitValue       float64     `json:"boProfitValue"`
-	BoStopLossValue     float64     `json:"boStopLossValue"`
-	LegName             interface{} `json:"legName"`
-	CreateTime          string      `json:"createTime"`
-	UpdateTime          string      `json:"updateTime"`
-	ExchangeTime        string      `json:"exchangeTime"`
-	DrvExpiryDate       interface{} `json:"drvExpiryDate"`
-	DrvOptionType       interface{} `json:"drvOptionType"`
-	DrvStrikePrice      float64     `json:"drvStrikePrice"`
-	OmsErrorCode        interface{} `json:"omsErrorCode"`
-	OmsErrorDescription interface{} `json:"omsErrorDescription"`
-}
+// Alias to shared model
+type DhanOrderWebhook = models.DhanOrderWebhook
 
 // WebhookServer holds the configuration for the webhook server
 type WebhookServer struct {
 	sheetsService  *sheets.Service
 	spreadsheetID  string
 	orderBookRange string
+	cache          *dcache.Cache
 }
 
 // Constants
@@ -72,10 +48,13 @@ func main() {
 	}
 
 	// Create webhook server
+	secCache := dcache.New(os.Getenv("CSV_PATH"), nil, 5*time.Minute)
+
 	server := &WebhookServer{
 		sheetsService:  sheetsService,
 		spreadsheetID:  getEnvWithDefault("SPREADSHEET_ID", defaultSpreadsheetID),
 		orderBookRange: getEnvWithDefault("ORDER_BOOK_RANGE", defaultOrderBookRange),
+		cache:          secCache,
 	}
 
 	// Setup routes
@@ -118,11 +97,10 @@ func (ws *WebhookServer) handleDhanOrderWebhook(w http.ResponseWriter, r *http.R
 	// Get trading symbol from security ID if trading symbol is empty
 	tradingSymbol := webhook.TradingSymbol
 	if tradingSymbol == "" {
-		// Try to get symbol from security ID mapping
-		symbol, err := getSymbolFromSecurityID(webhook.SecurityID)
+		symbol, err := ws.cache.GetSymbol(webhook.SecurityID)
 		if err != nil {
 			log.Printf("Warning: Could not get trading symbol for security ID %s: %v", webhook.SecurityID, err)
-			tradingSymbol = fmt.Sprintf("SEC_%s", webhook.SecurityID) // Fallback
+			tradingSymbol = fmt.Sprintf("SEC_%s", webhook.SecurityID)
 		} else {
 			tradingSymbol = symbol
 		}
@@ -202,14 +180,6 @@ func (ws *WebhookServer) updateOrderBook(webhook DhanOrderWebhook, tradingSymbol
 		orderDate, tradingSymbol, webhook.TransactionType, webhook.Quantity, webhook.Price)
 
 	return nil
-}
-
-// getSymbolFromSecurityID attempts to get trading symbol from security ID
-// This is a simplified version - you might want to use the same CSV lookup as in trading_bot.go
-func getSymbolFromSecurityID(securityID string) (string, error) {
-	// For now, return an error to use fallback
-	// You can implement CSV lookup here if needed
-	return "", fmt.Errorf("symbol lookup not implemented")
 }
 
 // createSheetsService creates Google Sheets service from environment variables
