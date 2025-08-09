@@ -10,6 +10,7 @@ import (
 
 	"github.com/alt-coder/go-mean-reversion/pkg/broker"
 	"github.com/alt-coder/go-mean-reversion/pkg/config"
+	dcache "github.com/alt-coder/go-mean-reversion/pkg/dhan/cache"
 )
 
 // Client implements the broker.Broker interface for Dhan API.
@@ -20,18 +21,21 @@ type Client struct {
 	client   *resty.Client
 	holdURL  string
 	orderURL string
+	cache    *dcache.Cache
 }
 
-// New returns a new Dhan client instance configured with the provided settings.
-func New(cfg config.DhanConfig) *Client {
-	c := resty.New()
-	c.SetTimeout(10 * time.Second)
+// New returns a new Dhan client instance configured with the provided settings
+// and security cache.
+func New(cfg config.DhanConfig, cache *dcache.Cache) *Client {
+	r := resty.New()
+	r.SetTimeout(10 * time.Second)
 	return &Client{
 		clientID: cfg.ClientID,
 		token:    cfg.AccessToken,
-		client:   c,
+		client:   r,
 		holdURL:  cfg.BaseURL + "/v2/holdings",
 		orderURL: cfg.BaseURL + "/v2/orders",
+		cache:    cache,
 	}
 }
 
@@ -84,7 +88,7 @@ func (d *Client) PlaceSellOrder(ctx context.Context, order broker.Order) (*broke
 
 // place executes the HTTP request for placing an order.
 func (d *Client) place(ctx context.Context, order broker.Order, txnType string) (*broker.OrderResponse, error) {
-	securityID, err := GetSecurityID(order.Symbol)
+	securityID, err := d.cache.GetID(order.Symbol)
 	if err != nil {
 		log.Print(err)
 		return nil, fmt.Errorf("failed to get security ID: %v", err)

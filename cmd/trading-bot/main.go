@@ -11,6 +11,7 @@ import (
 	"github.com/alt-coder/go-mean-reversion/pkg/broker/dhan"
 	"github.com/alt-coder/go-mean-reversion/pkg/config"
 	"github.com/alt-coder/go-mean-reversion/pkg/data"
+	dcache "github.com/alt-coder/go-mean-reversion/pkg/dhan/cache"
 	"github.com/alt-coder/go-mean-reversion/pkg/models"
 	"github.com/alt-coder/go-mean-reversion/pkg/sheets"
 	"github.com/alt-coder/go-mean-reversion/pkg/telegram"
@@ -25,9 +26,6 @@ func main() {
 		log.Fatalf("load config: %v", err)
 	}
 
-	// initialise broker
-	br := dhan.New(cfg.Dhan)
-
 	// initialise sheets service
 	sh, err := sheets.NewService(ctx, cfg.Sheets)
 	if err != nil {
@@ -39,7 +37,10 @@ func main() {
 	if err != nil {
 		log.Fatalf("load symbols: %v", err)
 	}
-	dhan.SetupSecurityCache(cfg.Trading.CSVPath, symbols)
+	secCache := dcache.New(cfg.Trading.CSVPath, symbols, 5*time.Minute)
+
+	// initialise broker
+	br := dhan.New(cfg.Dhan, secCache)
 
 	// initialise telegram client
 	bot, err := tgbotapi.NewBotAPI(cfg.Telegram.BotToken)

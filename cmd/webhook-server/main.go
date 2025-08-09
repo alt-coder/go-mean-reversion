@@ -10,7 +10,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/alt-coder/go-mean-reversion/pkg/broker/dhan"
+	dcache "github.com/alt-coder/go-mean-reversion/pkg/dhan/cache"
 	"github.com/alt-coder/go-mean-reversion/pkg/models"
 	"github.com/gorilla/mux"
 	"golang.org/x/oauth2/google"
@@ -28,6 +28,7 @@ type WebhookServer struct {
 	sheetsService  *sheets.Service
 	spreadsheetID  string
 	orderBookRange string
+	cache          *dcache.Cache
 }
 
 // Constants
@@ -47,10 +48,13 @@ func main() {
 	}
 
 	// Create webhook server
+	secCache := dcache.New(os.Getenv("CSV_PATH"), nil, 5*time.Minute)
+
 	server := &WebhookServer{
 		sheetsService:  sheetsService,
 		spreadsheetID:  getEnvWithDefault("SPREADSHEET_ID", defaultSpreadsheetID),
 		orderBookRange: getEnvWithDefault("ORDER_BOOK_RANGE", defaultOrderBookRange),
+		cache:          secCache,
 	}
 
 	// Setup routes
@@ -61,7 +65,6 @@ func main() {
 	// Start server
 	log.Printf("Webhook server listening on port %s", serverPort)
 	log.Printf("Webhook endpoint: http://localhost%s/webhook/dhan/order", serverPort)
-	dhan.SetupSecurityCache(os.Getenv("CSV_PATH"), nil)
 	log.Fatal(http.ListenAndServe(serverPort, router))
 }
 
@@ -94,7 +97,7 @@ func (ws *WebhookServer) handleDhanOrderWebhook(w http.ResponseWriter, r *http.R
 	// Get trading symbol from security ID if trading symbol is empty
 	tradingSymbol := webhook.TradingSymbol
 	if tradingSymbol == "" {
-		symbol, err := dhan.GetSymbolByID(webhook.SecurityID)
+		symbol, err := ws.cache.GetSymbol(webhook.SecurityID)
 		if err != nil {
 			log.Printf("Warning: Could not get trading symbol for security ID %s: %v", webhook.SecurityID, err)
 			tradingSymbol = fmt.Sprintf("SEC_%s", webhook.SecurityID)
