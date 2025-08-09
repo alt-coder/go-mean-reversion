@@ -7,6 +7,7 @@ const (
 	EnvTelegramChatID     = "TELEGRAM_CHAT_ID"
 	EnvMaxNewPositions    = "MAX_NEW_POSITIONS"
 	EnvAveragingThreshold = "AVERAGING_THRESHOLD"
+	EnvProfitThreshold    = "PROFIT_THRESHOLD"
 	EnvGoogleClientEmail  = "GOOGLE_CLIENT_EMAIL"
 	EnvGooglePrivateKey   = "GOOGLE_PRIVATE_KEY"
 	EnvGoogleProjectID    = "GOOGLE_PROJECT_ID"

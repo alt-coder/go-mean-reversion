@@ -35,6 +35,7 @@ type SheetsConfig struct {
 type TradingConfig struct {
 	MaxNewPositions    int
 	AveragingThreshold float64
+	ProfitThreshold    float64
 	CSVPath            string
 }
 
@@ -51,6 +52,13 @@ func Load() (Config, error) {
 	avgThreshold, err := strconv.ParseFloat(os.Getenv(EnvAveragingThreshold), 64)
 	if err != nil {
 		return Config{}, fmt.Errorf("invalid AVERAGING_THRESHOLD: %w", err)
+	}
+	profitStr := os.Getenv(EnvProfitThreshold)
+	profitThreshold := 5.0
+	if profitStr != "" {
+		if profitThreshold, err = strconv.ParseFloat(profitStr, 64); err != nil {
+			return Config{}, fmt.Errorf("invalid PROFIT_THRESHOLD: %w", err)
+		}
 	}
 	cfg := Config{
 		Dhan: DhanConfig{
@@ -71,6 +79,7 @@ func Load() (Config, error) {
 		Trading: TradingConfig{
 			MaxNewPositions:    maxPos,
 			AveragingThreshold: avgThreshold,
+			ProfitThreshold:    profitThreshold,
 			CSVPath:            os.Getenv(EnvCSVPath),
 		},
 	}

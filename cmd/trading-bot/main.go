@@ -2,10 +2,10 @@ package main
 
 import (
 	"context"
-	"fmt"
 	"log"
 	"time"
 
+	"github.com/alt-coder/go-mean-reversion/internal/strategy"
 	"github.com/alt-coder/go-mean-reversion/internal/yahoo"
 	"github.com/alt-coder/go-mean-reversion/pkg/broker"
 	"github.com/alt-coder/go-mean-reversion/pkg/broker/dhan"
@@ -61,10 +61,17 @@ func main() {
 		log.Fatalf("run strategy: %v", err)
 	}
 
-	for _, a := range actions {
-		handler.actions[a.ID] = a
-		if err := tg.SendActionMessage(ctx, cfg.Telegram.ChatID, a); err != nil {
-			log.Printf("telegram send: %v", err)
+	if len(actions) == 0 {
+		log.Println("no actions needed based on current analysis")
+	} else {
+		if err := tg.SendSummary(ctx, cfg.Telegram.ChatID, actions); err != nil {
+			log.Printf("telegram summary: %v", err)
+		}
+		for _, a := range actions {
+			handler.actions[a.ID] = a
+			if err := tg.SendActionMessage(ctx, cfg.Telegram.ChatID, a); err != nil {
+				log.Printf("telegram send: %v", err)
+			}
 		}
 	}
 
@@ -78,35 +85,22 @@ func runStrategy(ctx context.Context, cfg config.Config, br broker.Broker, sh sh
 		log.Printf("yahoo top candidates: %v; falling back to sheets", err)
 		cands, err = sh.GetTopCandidates(ctx)
 		if err != nil {
-			return nil, fmt.Errorf("candidates: %w", err)
+			return nil, err
 		}
 	}
 
 	holds, err := br.GetHoldings(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("holdings: %w", err)
+		return nil, err
 	}
 
-	actions := make([]models.Action, 0)
-	newPos := 0
-	for _, c := range cands {
-		if _, owned := holds[c.Symbol]; owned {
-			continue
-		}
-		if newPos >= cfg.Trading.MaxNewPositions {
-			break
-		}
-		a := models.Action{
-			ID:        fmt.Sprintf("%s-%d", c.Symbol, time.Now().UnixNano()),
-			Type:      models.NewPosition,
-			Symbol:    c.Symbol,
-			Lots:      1,
-			Price:     c.Price,
-			Reason:    fmt.Sprintf("dev %.2f", c.Deviation),
-			CreatedAt: time.Now(),
-		}
-		actions = append(actions, a)
-		newPos++
+	portfolio, err := sh.GetPortfolio(ctx)
+	if err != nil {
+		log.Printf("portfolio read failed: %v", err)
 	}
+
+	buyActions := strategy.DetermineBuyActions(cands, holds, cfg.Trading.MaxNewPositions, cfg.Trading.AveragingThreshold)
+	sellActions := strategy.DetermineSellActions(portfolio, cfg.Trading.ProfitThreshold)
+	actions := append(buyActions, sellActions...)
 	return actions, nil
 }
