@@ -1,22 +1,22 @@
 package main
 
 import (
-        "context"
-        "encoding/json"
-        "fmt"
-        "log"
-        "net/http"
-        "os"
-        "strings"
-        "time"
+	"context"
+	"encoding/json"
+	"fmt"
+	"log"
+	"net/http"
+	"os"
+	"strings"
+	"time"
 
-        "github.com/alt-coder/go-mean-reversion/pkg/models"
-        csvutil "github.com/alt-coder/go-mean-reversion/pkg/utils/csv"
-        "github.com/gorilla/mux"
-        "golang.org/x/oauth2/google"
-        "golang.org/x/oauth2/jwt"
-        "google.golang.org/api/option"
-        "google.golang.org/api/sheets/v4"
+	"github.com/alt-coder/go-mean-reversion/pkg/broker/dhan"
+	"github.com/alt-coder/go-mean-reversion/pkg/models"
+	"github.com/gorilla/mux"
+	"golang.org/x/oauth2/google"
+	"golang.org/x/oauth2/jwt"
+	"google.golang.org/api/option"
+	"google.golang.org/api/sheets/v4"
 )
 
 // DhanOrderWebhook represents the incoming webhook payload from Dhan
@@ -61,6 +61,7 @@ func main() {
 	// Start server
 	log.Printf("Webhook server listening on port %s", serverPort)
 	log.Printf("Webhook endpoint: http://localhost%s/webhook/dhan/order", serverPort)
+	dhan.SetupSecurityCache(os.Getenv("CSV_PATH"), nil)
 	log.Fatal(http.ListenAndServe(serverPort, router))
 }
 
@@ -93,11 +94,10 @@ func (ws *WebhookServer) handleDhanOrderWebhook(w http.ResponseWriter, r *http.R
 	// Get trading symbol from security ID if trading symbol is empty
 	tradingSymbol := webhook.TradingSymbol
 	if tradingSymbol == "" {
-		// Try to get symbol from security ID mapping
-		symbol, err := getSymbolFromSecurityID(webhook.SecurityID)
+		symbol, err := dhan.GetSymbolByID(webhook.SecurityID)
 		if err != nil {
 			log.Printf("Warning: Could not get trading symbol for security ID %s: %v", webhook.SecurityID, err)
-			tradingSymbol = fmt.Sprintf("SEC_%s", webhook.SecurityID) // Fallback
+			tradingSymbol = fmt.Sprintf("SEC_%s", webhook.SecurityID)
 		} else {
 			tradingSymbol = symbol
 		}
@@ -177,45 +177,6 @@ func (ws *WebhookServer) updateOrderBook(webhook DhanOrderWebhook, tradingSymbol
 		orderDate, tradingSymbol, webhook.TransactionType, webhook.Quantity, webhook.Price)
 
 	return nil
-}
-
-// getSymbolFromSecurityID attempts to get trading symbol from security ID
-// This is a simplified version - you might want to use the same CSV lookup as in trading_bot.go
-func getSymbolFromSecurityID(securityID string) (string, error) {
-        if securityID == "" {
-                return "", fmt.Errorf("empty securityID")
-        }
-        symbol, err := lookupSecurityID(securityID)
-        if err != nil {
-                return "", err
-        }
-        return symbol, nil
-}
-
-var (
-        securityCache map[string]string
-        cacheLoaded    time.Time
-)
-
-// lookupSecurityID loads the CSV cache if needed and maps security IDs to symbols.
-func lookupSecurityID(secID string) (string, error) {
-        if securityCache == nil || time.Since(cacheLoaded) > 5*time.Minute {
-                csvPath := os.Getenv("CSV_PATH")
-                cache, err := csvutil.LoadCache(csvPath, map[string]struct{}{})
-                if err != nil {
-                        return "", fmt.Errorf("load cache: %w", err)
-                }
-                securityCache = make(map[string]string, len(cache))
-                for sym, id := range cache {
-                        securityCache[id] = sym
-                }
-                cacheLoaded = time.Now()
-        }
-        sym, ok := securityCache[secID]
-        if !ok {
-                return "", fmt.Errorf("security id %s not found", secID)
-        }
-        return sym, nil
 }
 
 // createSheetsService creates Google Sheets service from environment variables

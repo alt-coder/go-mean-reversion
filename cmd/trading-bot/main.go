@@ -34,6 +34,13 @@ func main() {
 		log.Fatalf("sheets service: %v", err)
 	}
 
+	// load Nifty50 symbols and prepare security ID cache
+	symbols, err := sh.GetNifty50Symbols(ctx)
+	if err != nil {
+		log.Fatalf("load symbols: %v", err)
+	}
+	dhan.SetupSecurityCache(cfg.Trading.CSVPath, symbols)
+
 	// initialise telegram client
 	bot, err := tgbotapi.NewBotAPI(cfg.Telegram.BotToken)
 	if err != nil {
